@@ -309,7 +309,7 @@ void ElementPipelineSchedule::SchedulePreparation()
             {
                 node_rep_split_ready_input_channel_index_list[i][j].resize(input_channel_num);
                 // Add For VEC Node
-                if (PIMCOMP_node_list[i].operation != "OP_FC" && PIMCOMP_node_list[i].operation != "OP_CONV"
+                if (PIMCOMP_node_list[i].operation != "OP_FC" && PIMCOMP_node_list[i].operation != "OP_CONvV"
                     && PIMCOMP_node_list[i].operation != "OP_POOL" && (!no_consider_node_set.count(PIMCOMP_node_list[i].operation))) // VEC
                 {
                     int provider_num = PIMCOMP_topology_consumer_provider_relation[i].size();
