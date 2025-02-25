@@ -6,13 +6,14 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 import json
-import cv2
+# import cv2
 import argparse
 import sys
 import io
 import cProfile
 import pstats
 import time
+import os
 sys.setrecursionlimit(500000)
 
 
@@ -39,6 +40,9 @@ class ModelInfo:
         self.OutputToBiasDict = {}
         for node in self.onnx_model.graph.node:
             if node.op_type == "Conv" or node.op_type == "Gemm":
+                print("DEBUG_loadweight")
+                print(node.output)
+                print(node.input)
                 if len(node.input) == 2:
                     self.OutputToWeightDict[node.output[0]] = node.input[1]
                 elif len(node.input) == 3:
@@ -143,9 +147,10 @@ class ModelInfo:
         self.img /= 255
         '''
         self.img = images.numpy()
-        print(self.img.shape)
-        self.nn_input = np.transpose(self.img,(0, 2, 3, 1)).flatten()
-        print(self.nn_input.shape)
+        print("DEBUG>>>load_input:img.dtype:",self.img.dtype)
+        new_shape = (self.batch_size, -1)
+        self.nn_input = np.transpose(self.img,(0, 2, 3, 1)).reshape(new_shape)
+        print("DEBUG>>>load_input:nn_input.shape:",self.nn_input.shape)
 
     def get_ground_truth(self):
         print("==================== Get GroundTruth ====================")
@@ -155,7 +160,7 @@ class ModelInfo:
                 self.onnx_model.graph.output.extend([onnx.ValueInfoProto(name=output)])
 
         ort_session = onnxruntime.InferenceSession(self.onnx_model.SerializeToString())
-        ort_inputs = {ort_session.get_inputs()[0].name: self.img}
+        ort_inputs = {ort_session.get_inputs()[0].name: (self.img[0][np.newaxis,...])}#是一个字典，它将模型的输入名称映射到实际的输入数据
         # print("DEBUG:ORT_INPUTS shape = " ,ort_inputs['data'].shape)
         ort_outputs = ort_session.run(None, ort_inputs)
         # get all output node name
@@ -170,20 +175,22 @@ class ModelInfo:
                 self.intermediate_result[k] = v.transpose().flatten()
 
 class Memory:
-    def __init__(self, core_num):
+    def __init__(self, core_num,batch_size):
         self.core_num = core_num
         self.local_memory_max_size = 262144*4 # this size is element_num. 512kB * 4 / 16bit = 262144 * 4
-        self.local_memory = np.zeros((self.core_num, self.local_memory_max_size))
-        self.global_memory_max_size = 536870912 # this size is element_num. 1GB * 4/ 16bit = 536870912 * 4
+        self.local_memory = np.zeros((batch_size,self.core_num, self.local_memory_max_size))
+        print("DEBUG:local_memory.shape = ",self.local_memory.shape)
+        self.global_memory_max_size = 536870912//2 # this size is element_num. 1GB * 4/ 16bit = 536870912 * 4
         #self.global_memory_max_size = 536870912*4
-        self.global_memory = np.zeros(self.global_memory_max_size)
+        self.global_memory = np.zeros((batch_size,self.global_memory_max_size))
 
 
 class Verification(ModelInfo):
-    def __init__(self, model_path, pipeline_type):
+    def __init__(self, model_path, pipeline_type,batch_size):
         ModelInfo.__init__(self, model_path, pipeline_type)
         self.pipeline_type = pipeline_type
         self.time_vent = 0
+        self.batch_size = batch_size
 
 
     def load_compilation(self):
@@ -265,7 +272,7 @@ class Verification(ModelInfo):
         #对权重字典进行处理，方便误差计算
         self.phy_WeightDict_pos = {}
         self.phy_WeightDict_neg = {}
-        self.phy_quantify = {}
+        self.phy_quantify = {}#存储量化的S
         self.noise_p={}
         self.noise_n={}
         for k,v in self.GEMMWeightDict.items():
@@ -303,7 +310,7 @@ class Verification(ModelInfo):
                 #print("加入开关比例的weight：",torch.where(weight_ps>0,weight_ps,1/self.R_ratio))
                 self.phy_WeightDict_pos[k] = torch.where(weight_ps>0,weight_ps,1/self.R_ratio) * self.conductance_state*(self.noise_p[k]+1)#权重的物理映射，低阻态映射，引入阻值随机噪声
                 self.phy_WeightDict_neg[k] = torch.where(weight_ns>0,weight_ns,1/self.R_ratio) * self.conductance_state*(self.noise_n[k]+1)#权重的物理映射，低阻态映射
-        
+                #往后可以改一下，每一级的电导都加进去
     
 
         '''
@@ -355,13 +362,13 @@ class Verification(ModelInfo):
                     if (instruction["operation"] == "RECV"):
                         destination_address = instruction["destination_address"]
                         source_address = self.FinalInfo["instruction"]["core_list"][corresponding_core_index][corresponding_instruction_index_in_core]["source_address"]
-                        self.CoreMemory.local_memory[core_index, destination_address:destination_address + element_num] = \
-                            self.CoreMemory.local_memory[corresponding_core_index, source_address:source_address + element_num]
+                        self.CoreMemory.local_memory[:,core_index, destination_address:destination_address + element_num] = \
+                            self.CoreMemory.local_memory[:,corresponding_core_index, source_address:source_address + element_num]
                     else:
                         source_address = instruction["source_address"]
                         destination_address = self.FinalInfo["instruction"]["core_list"][corresponding_core_index][corresponding_instruction_index_in_core]["destination_address"]
-                        self.CoreMemory.local_memory[corresponding_core_index, destination_address:destination_address + element_num] = \
-                            self.CoreMemory.local_memory[core_index, source_address:source_address + element_num]
+                        self.CoreMemory.local_memory[:,corresponding_core_index, destination_address:destination_address + element_num] = \
+                            self.CoreMemory.local_memory[:,core_index, source_address:source_address + element_num]
                     self.start_simulation(core_index, instruction_index_in_core + 1)
                     self.start_simulation(corresponding_core_index, corresponding_instruction_index_in_core + 1)
                 return
@@ -387,16 +394,20 @@ class Verification(ModelInfo):
                                 if self.FinalInfo["node_list"][provider_index]["with_act"] == 1:
                                     input_data = (input_data + np.abs(input_data) ) / 2
                             self.CoreMemory.local_memory[core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = input_data
-                elif self.pipeline_type == "element":
+                elif self.pipeline_type == "element":#就先只改element
                     if stage == "INPUT":
-                        print("DEBUG: source_offset = " , source_offset)
-                        print("DEBUG: element_num = ",element_num)
-                        print("nn_input:", self.nn_input.shape)
-                        self.CoreMemory.local_memory[core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = \
-                            self.nn_input[source_offset:source_offset + element_num]
+                        # print("DEBUG: source_offset = " , source_offset)
+                        # print("DEBUG: element_num = ",element_num)
+                        # cut = self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + element_num]
+                        # cut2 = self.nn_input[:,source_offset:source_offset + element_num]
+                        # print("DEBUG_LOAD:local memory:", cut)
+                        # print("DEBUG_LOAD:nn_input:", cut2)
+                        self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = \
+                            self.nn_input[:,source_offset:source_offset + element_num]
+                        # print("DEBUG_LOAD:local memory:", self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + element_num])
                 if stage == "BIAS":
                     bias_name = self.OutputToBiasDict[node_name]
-                    self.CoreMemory.local_memory[core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = \
+                    self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = \
                         self.OriginalWeightDict[bias_name][0:element_num]
             elif instruction["operation"] == "ST":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
@@ -407,8 +418,8 @@ class Verification(ModelInfo):
                 destination_offset = instruction["destination_offset"]
                 element_num = instruction["element_num"]
                 self.CoreMemory.global_memory[
-                destination_address + destination_offset: destination_address + destination_offset + element_num] = \
-                    self.CoreMemory.local_memory[core_index, source_address + source_offset: source_address + source_offset + element_num]
+                :,destination_address + destination_offset: destination_address + destination_offset + element_num] = \
+                    self.CoreMemory.local_memory[:,core_index, source_address + source_offset: source_address + source_offset + element_num]
             elif instruction["operation"] == "MVMUL":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
                 AG_index = instruction["source"]
@@ -417,24 +428,34 @@ class Verification(ModelInfo):
                 weight_name = self.OutputToWeightDict[node_name]
                 height_start = self.AG_height_start[AG_index]
                 height_end = self.AG_height_end[AG_index]
-                #weight_matrix = self.GEMMWeightDict[weight_name][height_start:height_end + 1, :]#这里标示了权重的选取范围，如果分了比特可能要加一个维度
+                weight_matrix = self.GEMMWeightDict[weight_name][height_start:height_end + 1, :]#这里标示了权重的选取范围，如果分了比特可能要加一个维度
 
                 source_address = instruction["source_address"]
                 source_offset = instruction["source_offset"]
                 input_element_num = instruction["input_element_num"]
-                input_vector = self.CoreMemory.local_memory[core_index][source_address+source_offset:source_address+source_offset+input_element_num]
-                
+                # OP1 = self.CoreMemory.local_memory[:]
+                # print("DEBUG_MVMUL: input_element_num = ",input_element_num)
+                # print("DEBUG_MVMUL: op1.shape = ",OP1.shape)
+                # OP2 = OP1[core_index]
+                # print("DEBUG_MVMUL: op2.shape = ",OP2.shape)
+                # OP3 = OP2[source_address+source_offset:source_address+source_offset+input_element_num]
+                # print("DEBUG_MVMUL: op3.shape = ",OP3.shape)
+
+                input_vector = self.CoreMemory.local_memory[:,core_index,source_address+source_offset:source_address+source_offset+input_element_num]
+                # print("DEBUG_MVMUL: input_vector.shape = ",input_vector.shape)
                 phy_weight_p = self.phy_WeightDict_pos[weight_name][:,height_start:height_end + 1, :]
                 phy_weight_n = self.phy_WeightDict_neg[weight_name][:,height_start:height_end + 1, :]
                 S =self.phy_quantify[weight_name]
                 #noise = [self.noise_p[weight_name][:,height_start:height_end + 1, :].to('cuda'),self.noise_n[weight_name][:,height_start:height_end + 1, :].to('cuda')]
-                #result_base = np.matmul(input_vector, weight_matrix)
+                result_base = np.matmul(input_vector, weight_matrix)
                 #physic_result = self.physical_mvm(input_vector,weight_matrix)#在这里比较两个结果，总之先写完再说
-                
+                IR_weight_p = self.IRdrop_process(phy_weight_p)
+                IR_weight_n = self.IRdrop_process(phy_weight_n)
                 # start = time.time()
                 physic_result = self.prepared_physicalmm(input_vector,phy_weight_p,phy_weight_n,S)
                 # end = time.time()
                 # self.time_vent += end-start
+                ir_result = self.prepared_physicalmm(input_vector, IR_weight_p,IR_weight_n,S)
               
                 '''
                 print("物理结果：",physic_result)
@@ -446,14 +467,14 @@ class Verification(ModelInfo):
                 destination_address = instruction["destination_address"]
                 destination_offset = instruction["destination_offset"]
                 output_element_num = instruction["output_element_num"]
-                self.CoreMemory.local_memory[core_index, destination_address + destination_offset:destination_address + destination_offset + output_element_num] = physic_result
+                self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + output_element_num] = result_base
             elif instruction["operation"] == "LLDI":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
                 destination_address = instruction["destination_address"]
                 destination_offset = instruction["destination_offset"]
                 element_num = instruction["element_num"]
                 imm_val = instruction["imm_value"]
-                self.CoreMemory.local_memory[core_index, destination_address + destination_offset: destination_address + destination_offset + element_num] = imm_val
+                self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset: destination_address + destination_offset + element_num] = imm_val
             elif instruction["operation"] == "VVADD":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
                 source_1_address = instruction["source_1_address"]
@@ -463,10 +484,10 @@ class Verification(ModelInfo):
                 destination_address = instruction["destination_address"]
                 destination_offset = instruction["destination_offset"]
                 element_num = instruction["element_num"]
-                self.CoreMemory.local_memory[core_index,
+                self.CoreMemory.local_memory[:, core_index,
                 destination_address + destination_offset:destination_address + destination_offset + element_num] = \
-                    self.CoreMemory.local_memory[core_index, source_1_address + source_1_offset:source_1_address + source_1_offset + element_num] + \
-                    self.CoreMemory.local_memory[core_index, source_2_address + source_2_offset:source_2_address + source_2_offset + element_num]
+                    self.CoreMemory.local_memory[:, core_index, source_1_address + source_1_offset:source_1_address + source_1_offset + element_num] + \
+                    self.CoreMemory.local_memory[:, core_index, source_2_address + source_2_offset:source_2_address + source_2_offset + element_num]
             elif instruction["operation"] == "VVMUL":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
                 source_1_address = instruction["source_1_address"]
@@ -476,9 +497,9 @@ class Verification(ModelInfo):
                 destination_address = instruction["destination_address"]
                 destination_offset = instruction["destination_offset"]
                 element_num = instruction["element_num"]
-                source_1 = self.CoreMemory.local_memory[core_index, source_1_address + source_1_offset:source_1_address + source_1_offset + element_num]
-                source_2 = self.CoreMemory.local_memory[core_index, source_2_address + source_2_offset:source_2_address + source_2_offset + element_num]
-                self.CoreMemory.local_memory[core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = source_1 * source_2
+                source_1 = self.CoreMemory.local_memory[:,core_index, source_1_address + source_1_offset:source_1_address + source_1_offset + element_num]
+                source_2 = self.CoreMemory.local_memory[:,core_index, source_2_address + source_2_offset:source_2_address + source_2_offset + element_num]
+                self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = source_1 * source_2
             elif instruction["operation"] == "LMV":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
                 source_address = instruction["source_address"]
@@ -486,8 +507,8 @@ class Verification(ModelInfo):
                 destination_address = instruction["destination_address"]
                 destination_offset = instruction["destination_offset"]
                 element_num = instruction["element_num"]
-                self.CoreMemory.local_memory[core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = \
-                    self.CoreMemory.local_memory[core_index, source_address + source_offset:source_address + source_offset + element_num]
+                self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = \
+                    self.CoreMemory.local_memory[:,core_index, source_address + source_offset:source_address + source_offset + element_num]
             elif instruction["operation"] == "VVMAX":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
                 source_1_address = instruction["source_1_address"]
@@ -497,9 +518,9 @@ class Verification(ModelInfo):
                 destination_address = instruction["destination_address"]
                 destination_offset = instruction["destination_offset"]
                 element_num = instruction["element_num"]
-                source_1 = self.CoreMemory.local_memory[core_index, source_1_address + source_1_offset:source_1_address + source_1_offset + element_num]
-                source_2 = self.CoreMemory.local_memory[core_index, source_2_address + source_2_offset:source_2_address + source_2_offset + element_num]
-                self.CoreMemory.local_memory[core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = \
+                source_1 = self.CoreMemory.local_memory[:,core_index, source_1_address + source_1_offset:source_1_address + source_1_offset + element_num]
+                source_2 = self.CoreMemory.local_memory[:,core_index, source_2_address + source_2_offset:source_2_address + source_2_offset + element_num]
+                self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + element_num] = \
                     np.where(source_1 > source_2, source_1, source_2)
             elif instruction["operation"] == "VRELU":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
@@ -509,10 +530,10 @@ class Verification(ModelInfo):
                 destination_offset = instruction["destination_offset"]
                 element_num = instruction["element_num"]
                 node_index = instruction["node_index"]
-                self.CoreMemory.local_memory[core_index,
+                self.CoreMemory.local_memory[:,core_index,
                 destination_address + destination_offset:destination_address + destination_offset + element_num] = \
-                    (np.abs(self.CoreMemory.local_memory[core_index, source_address + source_offset:source_address + source_offset + element_num]) +
-                     self.CoreMemory.local_memory[core_index,source_address + source_offset:source_address + source_offset + element_num]) / 2          
+                    (np.abs(self.CoreMemory.local_memory[:,core_index, source_address + source_offset:source_address + source_offset + element_num]) +
+                     self.CoreMemory.local_memory[:,core_index,source_address + source_offset:source_address + source_offset + element_num]) / 2          
             elif instruction["operation"] == "VER":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
                 source_address = instruction["source_address"]
@@ -523,8 +544,8 @@ class Verification(ModelInfo):
                 input_cycle_index = instruction["input_cycle_index"]
                 output_channel_element_num = self.FinalInfo["node_list"][node_index]["output_dim"][1]
                 store_offset = input_cycle_index * output_channel_element_num
-                self.CoreMemory.global_memory[store_address + store_offset:store_address + store_offset + element_num] = \
-                    self.CoreMemory.local_memory[core_index, source_address + source_offset:source_address + source_offset + element_num]
+                self.CoreMemory.global_memory[:,store_address + store_offset:store_address + store_offset + element_num] = \
+                    self.CoreMemory.local_memory[:,core_index, source_address + source_offset:source_address + source_offset + element_num]
             else:
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
         next_core_index = core_index + 1
@@ -536,17 +557,19 @@ class Verification(ModelInfo):
         print("==================== Start Simulation ====================")
         #把load compilation里的那一段放到这了
         self.core_num = len(self.FinalInfo["instruction"]["core_list"])
-        self.visited_single = np.zeros((1000000), dtype=np.int16)
+        self.visited_single = np.zeros((1000000), dtype=np.int16) 
         self.comm_index_2_index_in_core = {}
         self.comm_index_2_core_index = {}
         self.inst_num_traversal = np.zeros((self.core_num), dtype=np.int16)
-        self.CoreMemory = Memory(self.core_num)
+        self.CoreMemory = Memory(self.core_num,self.batch_size)
         for core_idx in range(self.core_num):
             if self.FinalInfo["instruction"]["core_list"][core_idx] != None:
                 for inst_idx, instruction in enumerate(self.FinalInfo["instruction"]["core_list"][core_idx]):
                     if (instruction["operation"] == "SEND" or instruction["operation"] == "RECV"):
                         self.FinalInfo["instruction"]["core_list"][core_idx][inst_idx]["instruction_index_in_core"] = inst_idx
         #开始仿真
+        self.IRdrop_counter = 0
+        self.simu_counter = 0 
         self.start_simulation(0,0)
         #在simulation里加入一个返回结果
         verification_node_set = {"OP_CONV", "OP_FC"}
@@ -561,11 +584,14 @@ class Verification(ModelInfo):
             if self.FinalInfo["node_list"][verify_node_index]["output_dim_num"] == 2:
                 start_element_address = verify_node_index * self.max_output_element_num
                 output_element_num = self.node_name_2_output_element_num[verify_node_name]
-                verify_result = self.CoreMemory.global_memory[start_element_address:start_element_address + output_element_num]
+                verify_result = self.CoreMemory.global_memory[:,start_element_address:start_element_address + output_element_num]
                 ground_truth = (self.onnx_runtime_outs[verify_node_name].transpose(0, 1)).flatten()[0:output_element_num]
                 result = torch.tensor(verify_result)
                 truth = torch.tensor(ground_truth)
-                if(verify_result.size == 10):
+                if(verify_result[0].size == 10):
+                    # print("DEBUG:result = ",result)
+                    soft_out = torch.nn.functional.softmax(result)
+                    # print("DEBUG:after softmax =soft_out)
                     return torch.nn.functional.softmax(result)
 
     def comparing(self):
@@ -638,9 +664,12 @@ class Verification(ModelInfo):
             self.Hardware = json.load(f)
 
         self.Am_precision = self.Hardware["chip_config"]["core_config"]["matrix_config"]["adc_count"]#定点计算的精度
+        print("adc_count", self.Am_precision)
         self.cell_precision = self.Hardware["chip_config"]["core_config"]["matrix_config"]["cell_precision"]#一个cell有几个bit
         self.conductance_state = self.Hardware["chip_config"]["core_config"]["matrix_config"]["reference_conductance_state"] #每个cell的阻值取值（其实是电导），有几个值取决于上面的bit数
         self.R_ratio = self.Hardware["chip_config"]["core_config"]["matrix_config"]["R_ratio"]#开关比例
+        self.g_w = self.Hardware["chip_config"]["core_config"]["matrix_config"]["wordline_resistance"]#一横行的连线电阻
+        self.g_b = self.Hardware["chip_config"]["core_config"]["matrix_config"]["bitline_resistance"]#一竖列的连线电阻
         self.sigma = self.Hardware["chip_config"]["core_config"]["matrix_config"]["variation"]#阻值波动的σ
         self.dac_resol = self.Hardware["chip_config"]["core_config"]["matrix_config"]["dac_resolution"]
         self.adc_resol = self.Hardware["chip_config"]["core_config"]["matrix_config"]["adc_resolution"]
@@ -760,20 +789,31 @@ class Verification(ModelInfo):
         #print("arr:",arr)
         arr = torch.abs(arr)
         arr = arr.numpy(force=True)
-        #print("arr:",arr.dtype)
-        bits = np.unpackbits(arr.view(np.uint8),bitorder='little')  # 将int8数组展开为二进制表示
-        bits = bits.reshape(len(arr), A)  # 将展开后的数组重新形状为(len(arr), 8)
-        result = np.split(bits, A/self.dac_resol, axis=1)  # 按列拆分数组
-        result = np.packbits(result,axis = 2,bitorder='little')
+        shape = arr.shape
+        # print("arr:",arr[0])
+        # print(arr.shape)
+        bits = np.unpackbits(arr.view(np.uint8),axis = 1,bitorder='little')  # 将int8数组展开为二进制表示
+        bits = bits.reshape(shape[0],shape[1], A)  # 将展开后的数组重新形状为(batchsize,lenth, 8)
+        result = np.split(bits, A/self.dac_resol, axis=2)  # 按列拆分数组
+        result = np.packbits(result,axis = -1,bitorder='little')
         result = np.squeeze(result)
+        # print(result.shape)
+        result = result.transpose((1,0,2))#至此是
+        # print("DEBUG-result:",result[0])
+        # print(result.shape)
         
         result = torch.from_numpy(result).to('cuda').float()
         #print("result:",result)
         result_neg=torch.zeros(result.shape,device='cuda')
+        neg_mask = neg_mask.unsqueeze(1).expand_as(result)
+        # print("DeBug-result_neg:",result.shape)
+        # print(neg_mask.shape)
+        # print(neg_mask[0])
         result_neg = torch.where(neg_mask,result,result_neg)
         result_pos = result-result_neg
-        #print("result_pos:",result_pos)
-        #print("result_neg:",result_neg)
+        # print(result[0])
+        # print("result_pos:",result_pos[0])
+        # print("result_neg:",result_neg[0])
         return [result_pos,result_neg]
     
     def split_input_com(self,arr,A):#tensor实现
@@ -808,8 +848,38 @@ class Verification(ModelInfo):
         for i in range(int(A/self.cell_precision)):
             splited[i] = torch.bitwise_and(arr,mask)
             arr = torch.bitwise_right_shift(arr,self.cell_precision)
-        return splited
+        return splited#返回形状[矩阵个数，权重长，权重宽]
+    def IRdrop_process(self, weight):#处理IR-drop的模块
+        xbar_num = weight.shape[0]
+        m = weight.shape[1]
+        n = weight.shape[2]
+        Gm = torch.mean(weight,dim=(1,2)).view(-1,1)
+        i = torch.arange(1,m+1).to('cuda')
+        alpha = (self.g_b +(i-1)*i*Gm / 2) / (self.g_b + (m-1)*m*Gm/2)
+        j = torch.arange(1,n+1).to('cuda')
+        beta = (self.g_w + (n-j+1)*(n-j)*Gm / 2) / (self.g_w + (n-1)*n*Gm/2)#形状belike【8，64】
 
+        # print("weight: ",weight.shape)
+        # print("alpha: ",alpha)
+        # print("beta: ",beta)
+        # print("before: ",weight[0])
+
+        weight_b = beta.unsqueeze(1) * weight
+        weight_a = alpha.unsqueeze(2) * weight_b
+        
+        # print("after: ",weight_a[0])
+        # mean = torch.norm(weight_a-weight,p=2)/torch.norm(weight,p=2)
+        # if(self.IRdrop_counter == 0):
+        #     self.IRdrop_mean = mean
+        # else:
+        #     self.IRdrop_mean = (self.IRdrop_mean*(self.IRdrop_counter)+mean)/(self.IRdrop_counter + 1)
+        # self.IRdrop_counter += 1
+
+        # print("IRdrop_mean No. ",self.IRdrop_counter,": ",self.IRdrop_mean)
+
+        # input("----------------------------")
+        # input("Press Enter to continue...")
+        return weight_a
     
     def physical_xbar(self,input,weight):
         
@@ -850,33 +920,59 @@ class Verification(ModelInfo):
     def physical_xbar_4in1(self,input,weight):
 
         start = time.time()
-        input_cycle = input[0].shape[0]
-        phy_xbar_num = weight[0].shape[0]
+        input_cycle = input[0].shape[1]#加了batch之后就是[batchsize,bit_num,input]
+        phy_xbar_num = weight[0].shape[0]#这个不变
         post_dac = [input[0] * self.reference_voltage,input[1]*self.reference_voltage]#过一个dac
         
         #print("input:",input)
         #print("post_dac:",post_dac,"\n")
         
-        partial_sum_4 = torch.zeros(4,weight[0].shape[2],device = 'cuda')
+        partial_sum_4 = torch.zeros(self.batch_size,4,weight[0].shape[2],device = 'cuda')
         power_array = torch.exp2(torch.arange(input_cycle,device = 'cuda')*self.dac_resol)
         power_array_weight = torch.exp2(torch.arange(phy_xbar_num,device = 'cuda')*self.cell_precision)
         
-       
+        '''
+            将input的batch展开成到bit_num的维度，然后算完后再拆回独立的维度，再算位移
+        '''
         for w_count in (0,1):
             for i_count in (0,1):
                 # print("**********************************************")
                 # print("DEBUG:weight_shape = ",weight[0].shape)
+                
+                cat_input = torch.cat([post_dac[i_count][i] for i in range(self.batch_size)],dim = 0)#究竟是那个维度，有待考证])
+                # print("DEBUG-MVM:input : ",post_dac[i_count].shape)
+                # print("DEBUG-MVM:cat_input : ",cat_input.shape)
+                # print("DEBUG-MVM:weight : ",weight[w_count].shape)
                 cat_weight = torch.cat([weight[w_count][i] for i in range(phy_xbar_num)],dim = 1)#究竟是那个维度，有待考证
                 # print("DEBUG:cat_weight = ",cat_weight.shape)
                 # cat_weight = cat_weight.view(-1,weight[0].shape[2])
-                cat_sum = torch.mm(cat_weight.transpose(0,1),post_dac[i_count].transpose(0,1)) 
-                # print("DEBUG:cat_sum.shape = ",cat_sum.shape)   
+
+                cat_sum = torch.mm(cat_weight.transpose(0,1),cat_input.transpose(0,1)) 
+                
+                # print("DEBUG:cat_sum = ",cat_sum)   
+                
+                #乘完之后是[256，80]
+                cat_sum = cat_sum.view(-1,self.batch_size,input_cycle)
+                # print("DEBUG:cat_sum(after) = ",cat_sum.shape)
+                cat_sum = cat_sum.permute(1,0,2)#结束之后就是[10，256，8]，相当于10个batch分别算过了，接下来再考虑带batch的加权怎么算
+                # print("DEBUG:位移加前的形状",cat_sum.shape)
                 cat_sum = torch.matmul(cat_sum,power_array)
-                # print("DEBUG:cat_sum.shape = ",cat_sum.shape)
-                split_result = cat_sum.view(phy_xbar_num,weight[0].shape[2])
-                # print("DEBUG:split_result= ",split_result)
+                # print("DEBUG:位移加后的形状",cat_sum.shape)
+                # for i in range(10):
+                #     Mirror_input = post_dac[i_count][i]
+                #     Mirror_sum = torch.mm(cat_weight.transpose(0,1),Mirror_input.transpose(0,1))
+                #     Mirror_sum = torch.matmul(Mirror_sum,power_array)
+                #     print("DEBUG:compare two method ",i," : ",torch.norm(cat_sum[i]-Mirror_sum)/torch.norm(Mirror_sum))
+                    
+                # 现在进度是这样的，就是原本是一个输入做乘法再位移加，得到很多行一列的部分和输出，接下来要把不同crossbar分出来再做加权
+                # 现在经过一系列并行操作后变成了十个这样的部分和输出，其他的都一样
+                
+                split_result = cat_sum.view(self.batch_size, phy_xbar_num,weight[0].shape[2])
+                
+                # print("DEBUG:split_result= ",split_result.shape)
                 # sum_no_loop = torch.matmul(split_result.transpose(0,1),power_array_weight)
-                partial_sum_4[w_count*2+i_count] = torch.matmul(split_result.transpose(0,1),power_array_weight)
+                partial_sum_4[:,w_count*2+i_count] = torch.matmul(split_result.transpose(1,2),power_array_weight)
+                # print("DEBUG:partial_sum_4 = ",partial_sum_4.shape)
                 # print("sum_no_loop = ",sum_no_loop)
                 # print("DEBUG:循环的结果：")
                 # for i in range(phy_xbar_num):
@@ -887,7 +983,7 @@ class Verification(ModelInfo):
                 #     partial_sum_4[w_count*2+i_count] += partial_sum_3*2**(i*self.cell_precision)
                 # print("partial_sum_4:",partial_sum_4[w_count*2+i_count])
                 # print("误差：",(partial_sum_4[w_count*2+i_count]-sum_no_loop)/torch.norm(sum_no_loop))
-        partial_sum_5 = (partial_sum_4[0]+partial_sum_4[3]-partial_sum_4[1]-partial_sum_4[2])/(self.reference_voltage*self.conductance_state)
+        partial_sum_5 = (partial_sum_4[:,0]+partial_sum_4[:,3]-partial_sum_4[:,1]-partial_sum_4[:,2])/(self.reference_voltage*self.conductance_state)
         end = time.time()
         self.time_vent += end-start
         
@@ -905,13 +1001,16 @@ if __name__ == '__main__':
     transform = transforms.Compose([transforms.ToTensor(),transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2471, 0.2435, 0.2616])])
     #transform = transforms.Compose([transforms.ToTensor()])
     testset = torchvision.datasets.CIFAR10(root='./data',train=False,download=True,transform=transform)
-    testloader = torch.utils.data.DataLoader(testset,shuffle=False,num_workers=2)
+    
+    total_num = 100
+    Veri_Batchsize = 100
+    testloader = torch.utils.data.DataLoader(testset,batch_size = Veri_Batchsize,shuffle=False,num_workers=2)
     #性能分析
     pr = cProfile.Profile()
     
     pr.enable()
     # create verification
-    verification = Verification(args.model_path, args.pipeline_type)
+    verification = Verification(args.model_path, args.pipeline_type, Veri_Batchsize)
     # load model
     correct = 0
     total = 0
@@ -935,21 +1034,22 @@ if __name__ == '__main__':
         total_time += end - start
         # comparison
         #verification.comparing()
-        print(sim_result)
-        _, predicted = torch.max(sim_result,0)
-        print("标签维度:",labels.size(0))
+        # print(sim_result)
+        _, predicted = torch.max(sim_result,1)#每个batch取最大
+        print("标签维度:",labels.size(0))#相当于batch_size
         print("预测结果：",predicted)
         print("标签：",labels)
-        total+=labels.size(0)
+        total += labels.size(0)
         print("模拟部分的平均时间：",total_time/total)
         print("访存部分平均时间",verification.time_vent/total)
         correct +=(predicted ==labels).sum().item()
         if(total % 10==0):
             print("**************************************************")
-            print("验证进度：",total/2,"%")
-        if (total ==10):
+            print("验证进度：",total/total_num*100,"%")
+        if (total >= total_num):
             break
     acc = 100*correct/total
+    # print("全部IR_drop误差平均结果: ",verification.IRdrop_mean)
     print("准确率：",acc,"%")
     pr.disable()
     
