@@ -293,9 +293,41 @@ class Verification(ModelInfo):
                 weight_n = torch.abs(torch.subtract(weight_qtz,weight_p)).type(torch.int16)
                 weight_p = weight_p.type(torch.int16)    
                 #拆分bit
-                weight_ps = self.split_weight(weight_p,A)
-                weight_ns = self.split_weight(weight_n,A)
-                
+                weight_ps = self.split_weight(weight_p,A).int()
+                weight_ns = self.split_weight(weight_n,A).int()
+                if(self.SAF_flag):#SAF设置的原则，SA0固定为0，SA1固定为最高位2**（cell_precision）- 1
+                    #生成掩码矩阵，0就做与，全1就做按位或
+                    rand_matrix_0 = torch.rand(weight_ps.shape, device='cuda')
+                    mask_0 = (rand_matrix_0 > self.SA_0).int()
+                    mask_0 = torch.where(mask_0 == 1, 2**self.cell_precision -1, mask_0)
+                    rand_matrix_1 = torch.rand(weight_ps.shape, device='cuda')
+                    mask_1 = (rand_matrix_1 < self.SA_1).int()
+                    mask_1 = torch.where(mask_1 == 1, 2**self.cell_precision -1, mask_1)
+                    print("DEBUG_SAF: mask0:",torch.sum(torch.eq(mask_0, 0)).item())
+                    print("DEBUG_SAF: mask1:",torch.sum(torch.eq(mask_1, 3)).item())
+                    # print("DEBUG_SAF: BEFORE:",weight_ps[0])
+                    count0 = torch.sum(torch.eq(weight_ps, 0)).item()
+                    count3 = torch.sum(torch.eq(weight_ps, 3)).item()
+                    print("DEBUG_SAF: BEFORE-0:",count0)
+                    print("DEBUG_SAF: BEFORE-3:",count3)
+
+                    # weight_ps = torch.bitwise_or(weight_ps, mask_1)
+                    weight_ps = torch.where(mask_1!= 0, 2**self.cell_precision -1, weight_ps)
+                    weight_ns = torch.bitwise_or(weight_ns, mask_1)
+                    # print("DEBUG_SAF: MIDDLE:",weight_ps[0])
+                    count0 = torch.sum(torch.eq(weight_ps, 0)).item()
+                    count3 = torch.sum(torch.eq(weight_ps, 3)).item()
+                    print("DEBUG_SAF: MIDDLE-0:",count0)
+                    print("DEBUG_SAF: MIDDLE-3:",count3)
+                    weight_ps = torch.bitwise_and(weight_ps, mask_0)
+                    weight_ns = torch.bitwise_and(weight_ns, mask_0)
+                    # print("DEBUG_SAF: AFTER:",weight_ps[0])
+                    count0 = torch.sum(torch.eq(weight_ps, 0)).item()
+                    count3 = torch.sum(torch.eq(weight_ps, 3)).item()
+                    print("DEBUG_SAF: AFTER-0:",count0)
+                    print("DEBUG_SAF: AFTER-3:",count3)
+                    print("weight_shape",weight_ps.shape[0]*weight_ps.shape[1]*weight_ps.shape[2])
+
                 #print("层",k,"的分离权重形状：",weight_ps.shape)
                 #误差在这之后加
                 self.noise_p[k] = 0
@@ -308,8 +340,12 @@ class Verification(ModelInfo):
                 '''
                 #print("未加入开关比例的weight：",weight_ps)
                 #print("加入开关比例的weight：",torch.where(weight_ps>0,weight_ps,1/self.R_ratio))
-                self.phy_WeightDict_pos[k] = torch.where(weight_ps>0,weight_ps,1/self.R_ratio) * self.conductance_state*(self.noise_p[k]+1)#权重的物理映射，低阻态映射，引入阻值随机噪声
-                self.phy_WeightDict_neg[k] = torch.where(weight_ns>0,weight_ns,1/self.R_ratio) * self.conductance_state*(self.noise_n[k]+1)#权重的物理映射，低阻态映射
+                if(self.R_ratio != 0):
+                    self.phy_WeightDict_pos[k] = torch.where(weight_ps>0,weight_ps,1/self.R_ratio) * self.conductance_state*(self.noise_p[k]+1)#权重的物理映射，低阻态映射，引入阻值随机噪声
+                    self.phy_WeightDict_neg[k] = torch.where(weight_ns>0,weight_ns,1/self.R_ratio) * self.conductance_state*(self.noise_n[k]+1)#权重的物理映射，低阻态映射
+                else:
+                    self.phy_WeightDict_pos[k] = weight_ps * self.conductance_state*(self.noise_p[k]+1)#权重的物理映射，低阻态映射，引入阻值随机噪声
+                    self.phy_WeightDict_neg[k] = weight_ns * self.conductance_state*(self.noise_n[k]+1)
                 #往后可以改一下，每一级的电导都加进去
     
 
@@ -447,16 +483,29 @@ class Verification(ModelInfo):
                 phy_weight_n = self.phy_WeightDict_neg[weight_name][:,height_start:height_end + 1, :]
                 S =self.phy_quantify[weight_name]
                 #noise = [self.noise_p[weight_name][:,height_start:height_end + 1, :].to('cuda'),self.noise_n[weight_name][:,height_start:height_end + 1, :].to('cuda')]
-                result_base = np.matmul(input_vector, weight_matrix)
+                # result_base = np.matmul(input_vector, weight_matrix)
                 #physic_result = self.physical_mvm(input_vector,weight_matrix)#在这里比较两个结果，总之先写完再说
-                IR_weight_p = self.IRdrop_process(phy_weight_p)
-                IR_weight_n = self.IRdrop_process(phy_weight_n)
+                if(self.g_b >0 and self.g_w > 0):
+                    IR_weight_p = self.IRdrop_process(phy_weight_p)
+                    IR_weight_n = self.IRdrop_process(phy_weight_n)
+                else:
+                    IR_weight_p = phy_weight_p
+                    IR_weight_n = phy_weight_n
                 # start = time.time()
-                physic_result = self.prepared_physicalmm(input_vector,phy_weight_p,phy_weight_n,S)
+                # physic_result = self.prepared_physicalmm(input_vector,phy_weight_p,phy_weight_n,S)
                 # end = time.time()
                 # self.time_vent += end-start
                 ir_result = self.prepared_physicalmm(input_vector, IR_weight_p,IR_weight_n,S)
-              
+
+                # print("COMPARE: physic_result : ", physic_result)
+                # print("COMPARE: ir_result : ", ir_result)
+                # if(np.linalg.norm(physic_result)!=0):
+                #     mean = np.linalg.norm(ir_result - physic_result)/np.linalg.norm(physic_result)
+                #     if(self.IRdrop_counter == 0):
+                #         self.IRdrop_mean = mean
+                #     else:
+                #         self.IRdrop_mean = (self.IRdrop_mean*(self.IRdrop_counter)+mean)/(self.IRdrop_counter + 1)
+                #     self.IRdrop_counter += 1
                 '''
                 print("物理结果：",physic_result)
                 print("逻辑结果：",result_base)
@@ -467,7 +516,7 @@ class Verification(ModelInfo):
                 destination_address = instruction["destination_address"]
                 destination_offset = instruction["destination_offset"]
                 output_element_num = instruction["output_element_num"]
-                self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + output_element_num] = result_base
+                self.CoreMemory.local_memory[:,core_index, destination_address + destination_offset:destination_address + destination_offset + output_element_num] = ir_result
             elif instruction["operation"] == "LLDI":
                 self.inst_num_traversal[core_index] = self.inst_num_traversal[core_index] + 1
                 destination_address = instruction["destination_address"]
@@ -675,6 +724,9 @@ class Verification(ModelInfo):
         self.adc_resol = self.Hardware["chip_config"]["core_config"]["matrix_config"]["adc_resolution"]
         self.reference_voltage = self.Hardware["chip_config"]["core_config"]["matrix_config"]["ref_voltage"]
         #先加载这么多，有需要了再往里加
+        self.SAF_flag = self.Hardware["chip_config"]["core_config"]["matrix_config"]["SAF_flag"]
+        self.SA_0 = self.Hardware["chip_config"]["core_config"]["matrix_config"]["p_SA0"]
+        self.SA_1 = self.Hardware["chip_config"]["core_config"]["matrix_config"]["p_SA1"]
 
     def prepared_physicalmm(self,input,weight_p,weight_n,S):#和pysical_mvm功能完全一样，但是这里的weight是提前准备好的
         # start = time.time()
@@ -866,7 +918,7 @@ class Verification(ModelInfo):
 
         weight_b = beta.unsqueeze(1) * weight
         weight_a = alpha.unsqueeze(2) * weight_b
-        
+
         # print("after: ",weight_a[0])
         # mean = torch.norm(weight_a-weight,p=2)/torch.norm(weight,p=2)
         # if(self.IRdrop_counter == 0):
@@ -968,10 +1020,22 @@ class Verification(ModelInfo):
                 # 现在经过一系列并行操作后变成了十个这样的部分和输出，其他的都一样
                 
                 split_result = cat_sum.view(self.batch_size, phy_xbar_num,weight[0].shape[2])
-                
+                #进行模拟的ADC操作
+                max_value = torch.max(split_result, dim = 2, keepdim = True)[0]
+                epsilon = 1e-8
+                adc_range = 2**(self.adc_resol) - 1
+                normalized = split_result / (max_value + epsilon) * adc_range
+                post_adc = torch.round(normalized) * (max_value + epsilon) / adc_range
+                #非常糙的过adc
+                # print("DEBUG_ADC: resol ", )
+                # print("DEBUG_ADC: max ", max_value[0][0])
+                # print("adc_range: ", adc_range)
+                # print("DEBUG_ADC: BEFORE ", split_result[0][0])
+                # # print("DEBUG_ADC: BEFORE ", normalized[0][0])
+                # print("DEBUG_ADC: AFTER ", post_adc[0][0])
                 # print("DEBUG:split_result= ",split_result.shape)
                 # sum_no_loop = torch.matmul(split_result.transpose(0,1),power_array_weight)
-                partial_sum_4[:,w_count*2+i_count] = torch.matmul(split_result.transpose(1,2),power_array_weight)
+                partial_sum_4[:,w_count*2+i_count] = torch.matmul(post_adc.transpose(1,2),power_array_weight)#要在这一步之前模拟adc
                 # print("DEBUG:partial_sum_4 = ",partial_sum_4.shape)
                 # print("sum_no_loop = ",sum_no_loop)
                 # print("DEBUG:循环的结果：")
@@ -1002,7 +1066,7 @@ if __name__ == '__main__':
     #transform = transforms.Compose([transforms.ToTensor()])
     testset = torchvision.datasets.CIFAR10(root='./data',train=False,download=True,transform=transform)
     
-    total_num = 100
+    total_num = 1000
     Veri_Batchsize = 100
     testloader = torch.utils.data.DataLoader(testset,batch_size = Veri_Batchsize,shuffle=False,num_workers=2)
     #性能分析
