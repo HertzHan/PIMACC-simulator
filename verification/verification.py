@@ -40,7 +40,7 @@ class ModelInfo:
         self.OutputToBiasDict = {}
         for node in self.onnx_model.graph.node:
             if node.op_type == "Conv" or node.op_type == "Gemm":
-                print("DEBUG_loadweight")
+                # print("DEBUG_loadweight")
                 print(node.output)
                 print(node.input)
                 if len(node.input) == 2:
@@ -147,10 +147,10 @@ class ModelInfo:
         self.img /= 255
         '''
         self.img = images.numpy()
-        print("DEBUG>>>load_input:img.dtype:",self.img.dtype)
+        # print("DEBUG>>>load_input:img.dtype:",self.img.dtype)
         new_shape = (self.batch_size, -1)
         self.nn_input = np.transpose(self.img,(0, 2, 3, 1)).reshape(new_shape)
-        print("DEBUG>>>load_input:nn_input.shape:",self.nn_input.shape)
+        # print("DEBUG>>>load_input:nn_input.shape:",self.nn_input.shape)
 
     def get_ground_truth(self):
         print("==================== Get GroundTruth ====================")
@@ -179,7 +179,7 @@ class Memory:
         self.core_num = core_num
         self.local_memory_max_size = 262144*4 # this size is element_num. 512kB * 4 / 16bit = 262144 * 4
         self.local_memory = np.zeros((batch_size,self.core_num, self.local_memory_max_size))
-        print("DEBUG:local_memory.shape = ",self.local_memory.shape)
+        # print("DEBUG:local_memory.shape = ",self.local_memory.shape)
         self.global_memory_max_size = 536870912//2 # this size is element_num. 1GB * 4/ 16bit = 536870912 * 4
         #self.global_memory_max_size = 536870912*4
         self.global_memory = np.zeros((batch_size,self.global_memory_max_size))
@@ -303,13 +303,13 @@ class Verification(ModelInfo):
                     rand_matrix_1 = torch.rand(weight_ps.shape, device='cuda')
                     mask_1 = (rand_matrix_1 < self.SA_1).int()
                     mask_1 = torch.where(mask_1 == 1, 2**self.cell_precision -1, mask_1)
-                    print("DEBUG_SAF: mask0:",torch.sum(torch.eq(mask_0, 0)).item())
-                    print("DEBUG_SAF: mask1:",torch.sum(torch.eq(mask_1, 3)).item())
+                    # print("DEBUG_SAF: mask0:",torch.sum(torch.eq(mask_0, 0)).item())
+                    # print("DEBUG_SAF: mask1:",torch.sum(torch.eq(mask_1, 3)).item())
                     # print("DEBUG_SAF: BEFORE:",weight_ps[0])
                     count0 = torch.sum(torch.eq(weight_ps, 0)).item()
                     count3 = torch.sum(torch.eq(weight_ps, 3)).item()
-                    print("DEBUG_SAF: BEFORE-0:",count0)
-                    print("DEBUG_SAF: BEFORE-3:",count3)
+                    # print("DEBUG_SAF: BEFORE-0:",count0)
+                    # print("DEBUG_SAF: BEFORE-3:",count3)
 
                     # weight_ps = torch.bitwise_or(weight_ps, mask_1)
                     weight_ps = torch.where(mask_1!= 0, 2**self.cell_precision -1, weight_ps)
@@ -317,15 +317,15 @@ class Verification(ModelInfo):
                     # print("DEBUG_SAF: MIDDLE:",weight_ps[0])
                     count0 = torch.sum(torch.eq(weight_ps, 0)).item()
                     count3 = torch.sum(torch.eq(weight_ps, 3)).item()
-                    print("DEBUG_SAF: MIDDLE-0:",count0)
-                    print("DEBUG_SAF: MIDDLE-3:",count3)
+                    # print("DEBUG_SAF: MIDDLE-0:",count0)
+                    # print("DEBUG_SAF: MIDDLE-3:",count3)
                     weight_ps = torch.bitwise_and(weight_ps, mask_0)
                     weight_ns = torch.bitwise_and(weight_ns, mask_0)
                     # print("DEBUG_SAF: AFTER:",weight_ps[0])
                     count0 = torch.sum(torch.eq(weight_ps, 0)).item()
                     count3 = torch.sum(torch.eq(weight_ps, 3)).item()
-                    print("DEBUG_SAF: AFTER-0:",count0)
-                    print("DEBUG_SAF: AFTER-3:",count3)
+                    # print("DEBUG_SAF: AFTER-0:",count0)
+                    # print("DEBUG_SAF: AFTER-3:",count3)
                     print("weight_shape",weight_ps.shape[0]*weight_ps.shape[1]*weight_ps.shape[2])
 
                 #print("层",k,"的分离权重形状：",weight_ps.shape)
@@ -1059,6 +1059,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PIMCOMP Verification Module')
     parser.add_argument("-ModelPath", "--model_path", default="../models/ONNX/alexnet.onnx", help="onnx model path")
     parser.add_argument("-Pipeline", "--pipeline_type", default="element", help="[element] or [batch]")
+    parser.add_argument("-ImageNum", "--image_num", default="1000", help="number of test images")
+    parser.add_argument("-Batchsize", "--batchsize", default="100", help="batchsize of inference")
     #parser.add_argument("-IsVariable","--isvariable",default = "Yes",help = "Yes or No")
     args = parser.parse_args()
     #加载验证集
@@ -1066,8 +1068,8 @@ if __name__ == '__main__':
     #transform = transforms.Compose([transforms.ToTensor()])
     testset = torchvision.datasets.CIFAR10(root='./data',train=False,download=True,transform=transform)
     
-    total_num = 1000
-    Veri_Batchsize = 100
+    total_num = args.image_num
+    Veri_Batchsize = args.batchsize
     testloader = torch.utils.data.DataLoader(testset,batch_size = Veri_Batchsize,shuffle=False,num_workers=2)
     #性能分析
     pr = cProfile.Profile()

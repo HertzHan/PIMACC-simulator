@@ -1,7 +1,7 @@
 {
   "chip_config": {
     "core_config": {
-      "period": 1 ,
+      "period": 1,
       "matrix_config": {
         "xbar_array_count": 64,
         "period": 1,
@@ -9,13 +9,19 @@
         "dac_resolution": 1,
         "ref_voltage": 5,
         "dac_count": 128,
-        "xbar_size": [128,128],
-        "cell_precision": 2,
-        "reference_conductance_state":2e-5,
-        "R_ratio":100,
-        "bitline_resistance":1,
-        "wordline_resistance":1,
-        "variation":0.05,
+        "xbar_size": [
+          128,
+          128
+        ],
+        "cell_precision": 1,
+        "reference_conductance_state": 1e-05,
+        "R_ratio": 10,
+        "bitline_resistance": 1,
+        "wordline_resistance": 1,
+        "variation": 0.05,
+        "SAF_flag": true,
+        "p_SA0": 0.01,
+        "p_SA1": 0.01,
         "xbar_latency": 7,
         "xbar_read_power": 22.24,
         "sample_hold_latency_cycle": 1,
