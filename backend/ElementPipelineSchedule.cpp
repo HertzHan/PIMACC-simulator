@@ -77,6 +77,16 @@ ElementPipelineSchedule::ElementPipelineSchedule(std::string model_name_)
         last_node_index = 16;
         last_node_output_channel_num = 1;
     }
+    else if (model_name == "cifar10_resnet18")
+    {
+        last_node_index = 40;
+        last_node_output_channel_num = 1;
+    }
+    else if (model_name == "cifar10_vgg11")
+    {
+        last_node_index = 18;
+        last_node_output_channel_num = 1;
+    }
     else
     {
         fprintf(stderr, "Please Indicate The Last Node Index And Its Output Channel Num. \n");
