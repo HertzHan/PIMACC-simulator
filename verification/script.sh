@@ -19,7 +19,7 @@ for adc in "${ADC_RESOL[@]}"; do
 
     # 2. 执行程序并捕获输出（假设程序命令是 python my_program.py）
     echo "===== 执行配置：ADC位数=$adc =====" | tee -a "$LOG_FILE"
-    program_output=$(python verification.py --model_path ../models/ONNX/vgg11.onnx --pipeline_type element 2>&1 | tee -a "$LOG_FILE")
+    program_output=$(CUDA_VISIBLE_DEVICES=6 python verification.py --model_path ../models/ONNX/vgg11.onnx --pipeline_type element 2>&1 | tee -a "$LOG_FILE")
     accuracy=$(echo "$program_output" | grep "准确率：" | tail -n 1 | awk '{print $2}')
     # 3. 提取准确率结果
     # 从日志尾部提取最后一行含“准确率”的内容，并保存到结果文件
