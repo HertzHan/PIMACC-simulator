@@ -848,7 +848,8 @@ class Verification(ModelInfo):
         bits = bits.reshape(shape[0],shape[1], A)  # 将展开后的数组重新形状为(batchsize,lenth, 8)
         result = np.split(bits, A/self.dac_resol, axis=2)  # 按列拆分数组
         result = np.packbits(result,axis = -1,bitorder='little')
-        result = np.squeeze(result)
+        # print(result.shape)
+        result = np.squeeze(result, axis=-1)
         # print(result.shape)
         result = result.transpose((1,0,2))#至此是
         # print("DEBUG-result:",result[0])
@@ -1068,8 +1069,8 @@ if __name__ == '__main__':
     #transform = transforms.Compose([transforms.ToTensor()])
     testset = torchvision.datasets.CIFAR10(root='./data',train=False,download=True,transform=transform)
     
-    total_num = args.image_num
-    Veri_Batchsize = args.batchsize
+    total_num = int(args.image_num)
+    Veri_Batchsize = int(args.batchsize)
     testloader = torch.utils.data.DataLoader(testset,batch_size = Veri_Batchsize,shuffle=False,num_workers=2)
     #性能分析
     pr = cProfile.Profile()
