@@ -1,8 +1,8 @@
 # PIMACC
 
-PIMACC is an end-to-end computing-in-memory (CIM) accuracy simulator, which evaluates the output accuracy of a neural network running on a CIM accelerator under the impact of non-ideal factors. PIMACC works with task/data mappings and instructions given by a CIM compiler. PIMACC is devoted to simulator non-ideal effects in CIM inference, such as quantization error, error of device resistance, IR-drop effects, etc. Error injections are flexible and can be configured in a hardware configuration file.
+PIMACC is an end-to-end accuracy simulator of computing-in-memory (CIM) architectures, which evaluates the output accuracy of a neural network running on a CIM accelerator under the impact of non-ideal factors. PIMACC works with task/data mappings and instructions given by a CIM compiler. PIMACC is devoted to simulator non-ideal effects in CIM inference, such as quantization error, error of device resistance, IR-drop effects, etc. Error injections are flexible and can be configured in a hardware configuration file.
 
-PIMACC is based on PIMCOMP-NN, a CIM compiler, whose link is given hear: https://github.com/sunxt99/PIMCOMP-NN. The code of PIMCOMP-NN is included in this package. To run PIMACC, you need to first compile your target NN network with PIMCOMP-NN, including front end and back end. Please refer to the user guide of PIMCOMP-NN to see how to compile and use PIMCOMP-NN. To make sure you can run PIMACC after compilation, use `–v=YES` in backend compilation of PIMCOMP-NN.
+PIMACC is based on PIMCOMP-NN, a CIM compiler, whose link is given hear: https://github.com/sunxt99/PIMCOMP-NN. The code of PIMCOMP-NN is included in this package. To run PIMACC, you need to first compile your target NN network with PIMCOMP-NN, including front end and back end. Please refer to the user guide of PIMCOMP-NN to see how to use PIMCOMP-NN. To make sure you can run PIMACC after compilation, use `–v=YES` in backend compilation of PIMCOMP-NN.
 
 # Usage
 
@@ -18,27 +18,27 @@ In order to run the PIMACC verification program, you need to install the followi
 - cv2
 
 ## Simulation
-First compile PIMCOMP-NN. Please refer to the user guide of PIMCOMP-NN.
+1. First build PIMCOMP-NN (compile its source code into an executable). Please refer to the user guide of PIMCOMP-NN. This typically only needs very simple cmake and make commands. Please note that the code of PIMCOMP-NN is included in this package so you don't need to download PIMCOMP-NN separately.
 
-After PIMCOMP-NN is compiled, use it to compile your network model. This will generate a file storing the instructions.
+2. After PIMCOMP-NN is built, use it to compile your network model. Please refer to the user guide of PIMCOMP-NN. Remember to add `–v=YES` in backend compilation of PIMCOMP-NN. This will generate a file of `PIMACC/output/VerificationInfo.json` storing the instructions.
 
-Before running PIMACC, you need to make sure you have the same onnx model before compilation, and the compilation result in `PIMACC/output/VerificationInfo.json` after compilation.
+3. Run following commands (make sure you have the same onnx model file that is used in compilation):
 
 ```shell
 cd PIMACC/verification/
 python verification.py --model_path ../models/ONNX/resnet18.onnx --pipeline_type element --image_num 1000 --batchsize 10
 ```
-Simuilator will run and give the accuracy result.
+PIMACC will run and give the accuracy result. This example uses the cifar10 dataset. If you want to use a different dataset, you need to provide the dataset file and slightly modify `verification.py` at line ~1070. 
 
 ## Configaration
-Non-ideal effects are configured in PIMACC/config.json, you can set values of different effects.
-- "cell_precision": cell precision
-- "reference_conductance_state": the conductance of low-resistance-state
+Non-ideal effects are configured in **PIMACC/config.json**, you can set values of the following non-ideal effects.
+- "cell_precision": cell precision, how many bits a cell can store
+- "reference_conductance_state": cell conductance (siemens) of low-resistance-state
 - "R_ratio": on-off ratio, the ratio of high and low resistances
-- "bitline_resistance": wire resistance between two devices on bitline
-- "wordline_resistance":wire resistance between two devices on wordline
-- "variation": device resistance variation, in form of standard deviation
-- "SAF_flag": whether to consider SAF fault
-- "p_SA0": probability of SA0
-- "p_SA1": probability of SA1
+- "bitline_conductance": wire conductance (siemens) between two adjacent devices on bitline
+- "wordline_conductance": wire conductance (siemens) between two adjacent devices on wordline
+- "variation": device resistance variation, in form of (standard deviation)/(ideal value)
+- "SAF_flag": whether to consider stuck-at faults
+- "p_SA0": probability of stuck-at-0 (high-resistance state)
+- "p_SA1": probability of stuck-at-1 (low-resistance state)
 

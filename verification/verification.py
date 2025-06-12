@@ -717,8 +717,8 @@ class Verification(ModelInfo):
         self.cell_precision = self.Hardware["chip_config"]["core_config"]["matrix_config"]["cell_precision"]#一个cell有几个bit
         self.conductance_state = self.Hardware["chip_config"]["core_config"]["matrix_config"]["reference_conductance_state"] #每个cell的阻值取值（其实是电导），有几个值取决于上面的bit数
         self.R_ratio = self.Hardware["chip_config"]["core_config"]["matrix_config"]["R_ratio"]#开关比例
-        self.g_w = self.Hardware["chip_config"]["core_config"]["matrix_config"]["wordline_resistance"]#一横行的连线电阻
-        self.g_b = self.Hardware["chip_config"]["core_config"]["matrix_config"]["bitline_resistance"]#一竖列的连线电阻
+        self.g_w = self.Hardware["chip_config"]["core_config"]["matrix_config"]["wordline_conductance"]#一横行的连线电导
+        self.g_b = self.Hardware["chip_config"]["core_config"]["matrix_config"]["bitline_conductance"]#一竖列的连线电导
         self.sigma = self.Hardware["chip_config"]["core_config"]["matrix_config"]["variation"]#阻值波动的σ
         self.dac_resol = self.Hardware["chip_config"]["core_config"]["matrix_config"]["dac_resolution"]
         self.adc_resol = self.Hardware["chip_config"]["core_config"]["matrix_config"]["adc_resolution"]
