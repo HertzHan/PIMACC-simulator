@@ -1,8 +1,8 @@
 # PIMACC
 
-PIMACC is an end-to-end accuracy simulator of computing-in-memory (CIM) architectures, which evaluates the output accuracy of a neural network running on a CIM accelerator under the impact of non-ideal factors. PIMACC works with task/data mappings and instructions given by a CIM compiler. PIMACC is devoted to simulator non-ideal effects in CIM inference, such as quantization error, error of device resistance, IR-drop effects, etc. Error injections are flexible and can be configured in a hardware configuration file.
+PIMACC is an end-to-end accuracy simulator of computing-in-memory (CIM) architectures, which is devoted to evaluate the output accuracy of a neural network inference running on a CIM accelerator under the impact of non-ideal factors, such as quantization error, error of device resistance, IR-drop effects, etc. Error injections are flexible and can be configured in a hardware configuration file.
 
-PIMACC is based on PIMCOMP-NN, a CIM compiler, whose link is given hear: https://github.com/sunxt99/PIMCOMP-NN. The code of PIMCOMP-NN is included in this package. To run PIMACC, you need to first compile your target NN network with PIMCOMP-NN, including front end and back end. Please refer to the user guide of PIMCOMP-NN to see how to use PIMCOMP-NN. To make sure you can run PIMACC after compilation, use `–v=YES` in backend compilation of PIMCOMP-NN.
+PIMACC works with task/data mappings and instructions given by a CIM compiler, PIMCOMP-NN, whose link is given hear: https://github.com/sunxt99/PIMCOMP-NN. The code of PIMCOMP-NN is included in this package. To run PIMACC, you need to first compile your target network model with PIMCOMP-NN, including front end and back end. Please refer to the user guide of PIMCOMP-NN to see how to use PIMCOMP-NN. To make sure you can run PIMACC after compilation, add `–v=YES` in backend compilation of PIMCOMP-NN.
 
 # Usage
 
