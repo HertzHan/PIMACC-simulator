@@ -1103,21 +1103,22 @@ if __name__ == '__main__':
         #verification.comparing()
         # print(sim_result)
         _, predicted = torch.max(sim_result,1)#每个batch取最大
-        print("标签维度:",labels.size(0))#相当于batch_size
-        print("预测结果：",predicted)
-        print("标签：",labels)
+        print("--------------------------------------------------")
+        print("Label Dimension:",labels.size(0))#相当于batch_size
+        print("Inference Result: ",predicted)
+        print("Labels: ",labels)
         total += labels.size(0)
-        print("模拟部分的平均时间：",total_time/total)
-        print("访存部分平均时间",verification.time_vent/total)
+        print("Avg Time on Simulation: ",total_time/total)
+        print("Avg Time of Moving Data: ",verification.time_vent/total)
         correct +=(predicted ==labels).sum().item()
         if(total % 10==0):
             print("**************************************************")
-            print("验证进度：",total/total_num*100,"%")
+            print("verify progress: ",total/total_num*100,"%")
         if (total >= total_num):
             break
     acc = 100*correct/total
     # print("全部IR_drop误差平均结果: ",verification.IRdrop_mean)
-    print("准确率：",acc,"%")
+    print("Accuracy: ",acc,"%")
     pr.disable()
     
     s = io.StringIO()
