@@ -18,11 +18,9 @@ In order to run the PIMACC verification program, you need to install the followi
 - cv2
 
 ## Simulation
-1. First build PIMCOMP-NN (compile its source code into an executable). Please refer to the user guide of PIMCOMP-NN. This typically only needs very simple cmake and make commands. Please note that the code of PIMCOMP-NN is included in this package so you don't need to download PIMCOMP-NN separately.
+1. Follow the usage of PIMCOMP-NN to compile the network model using frontend and backend of PIMCOMP-NN. Please note that the source code of PIMCOMP-NN is included in this package so you don't need to download PIMCOMP-NN separately. Remember to add `–v=YES` in backend compilation of PIMCOMP-NN. After compilation, PIMCOMP-NN will generate a file of `PIMACC/output/VerificationInfo.json` storing the instructions.
 
-2. After PIMCOMP-NN is built, use it to compile your network model. Please refer to the user guide of PIMCOMP-NN. Remember to add `–v=YES` in backend compilation of PIMCOMP-NN. This will generate a file of `PIMACC/output/VerificationInfo.json` storing the instructions.
-
-3. Run following commands (make sure you have the same onnx model file that is used in compilation):
+2. Run following commands (make sure you have the same onnx model file that is used in compilation):
 
 ```shell
 cd PIMACC/verification/
