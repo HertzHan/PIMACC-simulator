@@ -35,7 +35,7 @@ Non-ideal effects are configured in **PIMACC/config.json**, you can set values o
 - "R_ratio": on-off ratio, the ratio of high and low resistances
 - "bitline_conductance": wire conductance (siemens) between two adjacent devices on bitline
 - "wordline_conductance": wire conductance (siemens) between two adjacent devices on wordline
-- "variation": device resistance variation, in form of (standard deviation)/(ideal value)
+- "variation": device resistance variation, which is the relative deviation and calculated as (standard deviation)/(ideal value)
 - "SAF_flag": whether to consider stuck-at faults
 - "p_SA0": probability of stuck-at-0 (high-resistance state)
 - "p_SA1": probability of stuck-at-1 (low-resistance state)
