@@ -42,7 +42,7 @@ Non-ideal effects are configured in **PIMACC/config.json**, you can set values o
 
 # Code Author
 
-[Haocheng Han] (Institute of Computing Technology, Chinese Academy of Sciences)
+Haocheng Han (Institute of Computing Technology, Chinese Academy of Sciences)
 
 # Project PI
 
