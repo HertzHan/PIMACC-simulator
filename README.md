@@ -40,3 +40,10 @@ Non-ideal effects are configured in **PIMACC/config.json**, you can set values o
 - "p_SA0": probability of stuck-at-0 (high-resistance state)
 - "p_SA1": probability of stuck-at-1 (low-resistance state)
 
+# Code Author
+
+[Haocheng Han] (Institute of Computing Technology, Chinese Academy of Sciences)
+
+# Project PI
+
+[Xiaoming Chen](https://people.ucas.edu.cn/~chenxm)
