@@ -1104,16 +1104,16 @@ if __name__ == '__main__':
         # print(sim_result)
         _, predicted = torch.max(sim_result,1)#每个batch取最大
         print("--------------------------------------------------")
-        print("Label Dimension:",labels.size(0))#相当于batch_size
+        print("Label Dimension: ",labels.size(0))#相当于batch_size
         print("Inference Result: ",predicted)
         print("Labels: ",labels)
         total += labels.size(0)
-        print("Avg Time on Simulation: ",total_time/total)
+        print("Avg Time of Simulation: ",total_time/total)
         print("Avg Time of Moving Data: ",verification.time_vent/total)
         correct +=(predicted ==labels).sum().item()
         if(total % 10==0):
             print("**************************************************")
-            print("verify progress: ",total/total_num*100,"%")
+            print("Verify progress: ",total/total_num*100,"%")
         if (total >= total_num):
             break
     acc = 100*correct/total
